@@ -1,4 +1,4 @@
-# app.py - versión con Fallback de login (corregida)
+# app.py - versión corregida: safe_rerun() en lugar de st.experimental_rerun()
 import streamlit as st
 import streamlit_authenticator as stauth
 from utils import cargar_datos, agregar_movimiento, borrar_movimiento, calcular_saldos
@@ -46,6 +46,42 @@ if use_stauth:
         use_stauth = False
 
 # ----------------------------
+# Helper: recargar de forma segura
+# ----------------------------
+def safe_rerun():
+    """
+    Intenta recargar la app. Primero usa st.experimental_rerun().
+    Si no existe, intenta forzar un reload cambiando query params.
+    Si eso tampoco está disponible, pide al usuario refrescar la página manualmente.
+    """
+    try:
+        # preferido
+        st.experimental_rerun()
+    except Exception:
+        # intentar método alternativo: toggle query param para forzar rerender
+        try:
+            # obtener params actuales (si la función existe)
+            params = {}
+            try:
+                params = st.experimental_get_query_params()
+            except Exception:
+                params = {}
+            # toggle helper param
+            current = int(params.get("_refresh", ["0"])[0]) if params.get("_refresh") else 0
+            new = {"_refresh": str(current ^ 1)}
+            try:
+                st.experimental_set_query_params(**new)
+                # detener ejecución para que Streamlit recargue con nuevos params
+                st.stop()
+            except Exception:
+                # si no se puede setear params, pedir refresh manual
+                st.warning("Refresca la página manualmente para ver los cambios.")
+                return
+        except Exception:
+            st.warning("Refresca la página manualmente para ver los cambios.")
+            return
+
+# ----------------------------
 # Función: fallback login (form propio)
 # ----------------------------
 def fallback_login_form():
@@ -69,7 +105,12 @@ def fallback_login_form():
             st.session_state["username"] = u
             st.session_state["name"] = nombres[usuarios.index(u)]
             st.success("Login correcto (fallback).")
-            st.experimental_rerun()
+            # tratamos de recargar la app; si no se puede, devolvemos True para continuar
+            try:
+                safe_rerun()
+                return True
+            except Exception:
+                return True
         else:
             st.error("Usuario o contraseña incorrectos (fallback).")
     return st.session_state.get("logged_in", False)
@@ -85,11 +126,13 @@ nombre = None
 if authenticator is not None:
     # Llamamos login con varias firmas posibles
     try:
+        # intentar firma moderna con keywords
         auth_status = authenticator.login(name="Login", location="main")
     except TypeError:
         try:
             auth_status = authenticator.login(location="main")
         except Exception:
+            # si falla al renderizar, dejamos auth_status en None para fallback
             auth_status = None
     except Exception:
         auth_status = None
@@ -170,56 +213,4 @@ if authenticator is not None:
 
 if not logout_done:
     if st.sidebar.button("Cerrar sesión (fallback)"):
-        st.session_state["logged_in"] = False
-        st.session_state.pop("username", None)
-        st.session_state.pop("name", None)
-        st.experimental_rerun()
-
-# ----------------------------
-# Agregar nuevo movimiento
-# ----------------------------
-st.subheader("➕ Agregar ingreso o gasto")
-with st.form("nuevo_movimiento"):
-    persona = st.selectbox("Persona", ["Vos", "Tu novia"])
-    tipo = st.radio("Tipo", ["Ingreso", "Gasto"])
-    monto = st.number_input("Monto", min_value=0.0, format="%.2f")
-    descripcion = st.text_input("Descripción (opcional)")
-    submit = st.form_submit_button("Agregar")
-
-if submit:
-    if monto > 0:
-        agregar_movimiento(persona, tipo, monto, descripcion)
-        st.success("✅ Movimiento agregado.")
-    else:
-        st.error("El monto debe ser mayor a 0.")
-
-# ----------------------------
-# Historial con borrar
-# ----------------------------
-st.subheader("📜 Historial")
-df = cargar_datos()
-if df.empty:
-    st.info("Todavía no hay movimientos cargados.")
-else:
-    for idx, row in df.iterrows():
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            desc = f" - {row.get('Descripción', '')}" if row.get("Descripción", "") else ""
-            # línea corregida: f-string en una sola línea y formateo seguro del monto
-            st.write(f"**ID {idx}** — {row.get('Persona', '')} • {row.get('Tipo', '')} • ${float(row.get('Monto', 0.0)):.2f}{desc}")
-        with col2:
-            if st.button("🗑️", key=f"delete_{idx}"):
-                borrar_movimiento(idx)
-                st.experimental_rerun()
-
-# ----------------------------
-# Saldos
-# ----------------------------
-st.subheader("📊 Saldos")
-saldos, total = calcular_saldos()
-if saldos:
-    for p, s in saldos.items():
-        st.write(f"**{p}:** ${s:.2f}")
-else:
-    st.write("No hay saldos para mostrar.")
-st.write(f"### 💰 Total conjunto: ${total:.2f}")
+        st.session_stat_
