@@ -11,7 +11,7 @@ usuarios = ["fran", "novia"]
 nombres = ["Francisco", "Novia"]
 contrasenas = ["1234", "abcd"]
 
-# Hashear cada contraseña individualmente
+# Hashear cada contraseña
 hashed_pw = [stauth.Hasher().hash(pw) for pw in contrasenas]
 
 # Formato requerido por la librería
@@ -25,7 +25,7 @@ credentials = {
 # Crear autenticador
 authenticator = stauth.Authenticate(
     credentials,
-    "cookie_gastos",  # nombre de la cookie
+    "cookie_gastos",  # nombre de cookie
     "clave_firma",    # clave secreta
     cookie_expiry_days=1
 )
@@ -33,15 +33,12 @@ authenticator = stauth.Authenticate(
 # ----------------------------
 # LOGIN
 # ----------------------------
-nombre, auth_status, usuario = authenticator.login("Login", location="main")
+login_result = authenticator.login("Login")  # login actualizado
 
-
-if auth_status == False:
-    st.error("❌ Usuario o contraseña incorrectos")
-elif auth_status == None:
+if login_result is None:
     st.warning("⚠️ Ingresá usuario y contraseña")
-else:
-    # Login correcto
+elif login_result:  # login correcto
+    nombre = login_result['name']
     st.set_page_config(page_title="Gestor de gastos en pareja", layout="centered")
     st.title("💸 Gestor de gastos en pareja")
     st.write(f"Bienvenido/a **{nombre}** 👋")
@@ -89,3 +86,6 @@ else:
     for persona, saldo in saldos.items():
         st.write(f"**{persona}:** {saldo:.2f}")
     st.write(f"### 💰 Total conjunto: {total:.2f}")
+
+else:
+    st.error("❌ Usuario o contraseña incorrectos")
