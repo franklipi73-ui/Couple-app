@@ -33,7 +33,7 @@ authenticator = stauth.Authenticate(
 # ----------------------------
 # LOGIN
 # ----------------------------
-nombre, auth_status, usuario = authenticator.login(location="main")
+auth_status = authenticator.login("Login", location="main")
 
 if auth_status is False:
     st.error("❌ Usuario o contraseña incorrectos")
@@ -41,6 +41,7 @@ elif auth_status is None:
     st.warning("⚠️ Ingresá usuario y contraseña")
 else:
     # Login correcto
+    nombre = authenticator.credentials["usernames"][authenticator.username]["name"]
     st.set_page_config(page_title="Gestor de gastos en pareja", layout="centered")
     st.title("💸 Gestor de gastos en pareja")
     st.write(f"Bienvenido/a **{nombre}** 👋")
