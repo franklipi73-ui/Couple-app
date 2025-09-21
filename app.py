@@ -18,7 +18,9 @@ st.set_page_config(page_title="Gestor de gastos en pareja", layout="centered")
 st.title("💸 Gestor de gastos en pareja")
 st.write("Carguen ingresos y gastos para llevar el control entre los dos.")
 
+# ----------------------------
 # Formulario para nuevo movimiento
+# ----------------------------
 st.subheader("➕ Agregar ingreso o gasto")
 with st.form("nuevo_movimiento"):
     persona = st.selectbox("Persona", ["Vos", "Tu novia"])
@@ -36,11 +38,30 @@ if submit and monto > 0:
     df.to_csv(DATA_FILE, index=False)
     st.success("✅ Movimiento agregado.")
 
-# Mostrar historial
+# ----------------------------
+# Mostrar historial y opción de borrar
+# ----------------------------
 st.subheader("📜 Historial")
-st.dataframe(df)
 
+if len(df) > 0:
+    # Agregamos un índice para identificar cada fila
+    df_reset = df.reset_index()
+    df_reset["ID"] = df_reset["index"]
+    st.dataframe(df_reset.drop(columns="index"))
+
+    # Selección de fila a borrar
+    borrar_id = st.selectbox("Seleccioná el ID a borrar", df_reset["ID"])
+    if st.button("🗑️ Borrar movimiento"):
+        df = df.drop(index=borrar_id)
+        df.to_csv(DATA_FILE, index=False)
+        st.success(f"✅ Movimiento con ID {borrar_id} borrado.")
+        st.experimental_rerun()
+else:
+    st.info("Todavía no hay movimientos cargados.")
+
+# ----------------------------
 # Calcular saldos
+# ----------------------------
 ingresos = df[df["Tipo"] == "Ingreso"].groupby("Persona")["Monto"].sum()
 gastos = df[df["Tipo"] == "Gasto"].groupby("Persona")["Monto"].sum()
 
