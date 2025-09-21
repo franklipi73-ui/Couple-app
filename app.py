@@ -1,4 +1,4 @@
-# app.py - versión corregida: safe_rerun() en lugar de st.experimental_rerun()
+# app.py - versión final: safe_rerun usando st.query_params cuando esté disponible
 import streamlit as st
 import streamlit_authenticator as stauth
 from utils import cargar_datos, agregar_movimiento, borrar_movimiento, calcular_saldos
@@ -46,40 +46,77 @@ if use_stauth:
         use_stauth = False
 
 # ----------------------------
-# Helper: recargar de forma segura
+# Helper: recargar de forma segura (usa st.query_params cuando exista)
 # ----------------------------
 def safe_rerun():
     """
-    Intenta recargar la app. Primero usa st.experimental_rerun().
-    Si no existe, intenta forzar un reload cambiando query params.
-    Si eso tampoco está disponible, pide al usuario refrescar la página manualmente.
+    Intenta recargar la app. Primero intenta st.experimental_rerun().
+    Si no existe, intenta forzar un reload cambiando st.query_params (o las funciones experimentales si están).
+    Si eso tampoco funciona, muestra un aviso para refrescar manualmente.
     """
+    # 1) preferido: experimental_rerun si existe
     try:
-        # preferido
-        st.experimental_rerun()
+        # st.experimental_rerun puede no existir en algunas versiones; si existe, lo usamos
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+            return
     except Exception:
-        # intentar método alternativo: toggle query param para forzar rerender
-        try:
-            # obtener params actuales (si la función existe)
-            params = {}
+        pass
+
+    # 2) intentar togglear query params usando la API nueva st.query_params
+    try:
+        if hasattr(st, "query_params"):
             try:
-                params = st.experimental_get_query_params()
+                params = st.query_params or {}
             except Exception:
                 params = {}
-            # toggle helper param
-            current = int(params.get("_refresh", ["0"])[0]) if params.get("_refresh") else 0
-            new = {"_refresh": str(current ^ 1)}
+            # obtener valor actual (lista de strings) o default
+            current = 0
+            if params.get("_refresh"):
+                try:
+                    current = int(params.get("_refresh")[0])
+                except Exception:
+                    current = 0
+            # construir nuevo dict: st.query_params espera valores tipo list[str]
+            new = dict(params)  # copia shallow
+            new["_refresh"] = [str(current ^ 1)]
+            # asignar de vuelta (API moderna)
             try:
-                st.experimental_set_query_params(**new)
+                st.query_params = new
                 # detener ejecución para que Streamlit recargue con nuevos params
                 st.stop()
-            except Exception:
-                # si no se puede setear params, pedir refresh manual
-                st.warning("Refresca la página manualmente para ver los cambios.")
                 return
-        except Exception:
-            st.warning("Refresca la página manualmente para ver los cambios.")
-            return
+            except Exception:
+                # si no se puede asignar, caer al siguiente fallback
+                pass
+
+    except Exception:
+        pass
+
+    # 3) fallback a las funciones experimentales antiguas, si existen
+    try:
+        if hasattr(st, "experimental_get_query_params") and hasattr(st, "experimental_set_query_params"):
+            try:
+                params = st.experimental_get_query_params() or {}
+            except Exception:
+                params = {}
+            current = 0
+            if params.get("_refresh"):
+                try:
+                    current = int(params.get("_refresh")[0])
+                except Exception:
+                    current = 0
+            try:
+                st.experimental_set_query_params(_refresh=str(current ^ 1))
+                st.stop()
+                return
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 4) si todo falla, pedir refresh manual
+    st.warning("No se pudo recargar automáticamente — por favor refrescá la página manualmente para ver los cambios.")
 
 # ----------------------------
 # Función: fallback login (form propio)
@@ -105,12 +142,9 @@ def fallback_login_form():
             st.session_state["username"] = u
             st.session_state["name"] = nombres[usuarios.index(u)]
             st.success("Login correcto (fallback).")
-            # tratamos de recargar la app; si no se puede, devolvemos True para continuar
-            try:
-                safe_rerun()
-                return True
-            except Exception:
-                return True
+            # intentamos recargar la app para actualizar la UI
+            safe_rerun()
+            return True
         else:
             st.error("Usuario o contraseña incorrectos (fallback).")
     return st.session_state.get("logged_in", False)
@@ -124,15 +158,13 @@ username = None
 nombre = None
 
 if authenticator is not None:
-    # Llamamos login con varias firmas posibles
+    # Llamamos login con varias firmas posibles (manejo robusto)
     try:
-        # intentar firma moderna con keywords
         auth_status = authenticator.login(name="Login", location="main")
     except TypeError:
         try:
             auth_status = authenticator.login(location="main")
         except Exception:
-            # si falla al renderizar, dejamos auth_status en None para fallback
             auth_status = None
     except Exception:
         auth_status = None
@@ -213,4 +245,63 @@ if authenticator is not None:
 
 if not logout_done:
     if st.sidebar.button("Cerrar sesión (fallback)"):
-        st.session_stat_
+        st.session_state["logged_in"] = False
+        st.session_state.pop("username", None)
+        st.session_state.pop("name", None)
+        # intentar recargar para aplicar logout
+        safe_rerun()
+        st.info("Sesión cerrada. Refresca la página si sigue apareciendo logueado.")
+        st.stop()
+
+# ----------------------------
+# Agregar nuevo movimiento
+# ----------------------------
+st.subheader("➕ Agregar ingreso o gasto")
+with st.form("nuevo_movimiento"):
+    persona = st.selectbox("Persona", ["Vos", "Tu novia"])
+    tipo = st.radio("Tipo", ["Ingreso", "Gasto"])
+    monto = st.number_input("Monto", min_value=0.0, format="%.2f")
+    descripcion = st.text_input("Descripción (opcional)")
+    submit = st.form_submit_button("Agregar")
+
+if submit:
+    if monto > 0:
+        agregar_movimiento(persona, tipo, monto, descripcion)
+        st.success("✅ Movimiento agregado.")
+        # intentar recargar para mostrar nuevo registro
+        safe_rerun()
+    else:
+        st.error("El monto debe ser mayor a 0.")
+
+# ----------------------------
+# Historial con borrar
+# ----------------------------
+st.subheader("📜 Historial")
+df = cargar_datos()
+if df.empty:
+    st.info("Todavía no hay movimientos cargados.")
+else:
+    for idx, row in df.iterrows():
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            desc = f" - {row.get('Descripción', '')}" if row.get("Descripción", "") else ""
+            st.write(f"**ID {idx}** — {row.get('Persona', '')} • {row.get('Tipo', '')} • ${float(row.get('Monto', 0.0)):.2f}{desc}")
+        with col2:
+            if st.button("🗑️", key=f"delete_{idx}"):
+                borrar_movimiento(idx)
+                # intentamos recargar; si no es posible, avisamos
+                safe_rerun()
+                st.info("Movimiento borrado. Refresca la página si el historial no se actualiza.")
+                st.stop()
+
+# ----------------------------
+# Saldos
+# ----------------------------
+st.subheader("📊 Saldos")
+saldos, total = calcular_saldos()
+if saldos:
+    for p, s in saldos.items():
+        st.write(f"**{p}:** ${s:.2f}")
+else:
+    st.write("No hay saldos para mostrar.")
+st.write(f"### 💰 Total conjunto: ${total:.2f}")
