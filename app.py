@@ -1,4 +1,4 @@
-# app.py - versión con Fallback de login si streamlit-authenticator no muestra el formulario
+# app.py - versión con Fallback de login (corregida)
 import streamlit as st
 import streamlit_authenticator as stauth
 from utils import cargar_datos, agregar_movimiento, borrar_movimiento, calcular_saldos
@@ -26,7 +26,6 @@ try:
     }
     use_stauth = True
 except Exception:
-    # Si algo falla con stauth (no instalado o API rara), lo marcamos y usaremos fallback puro
     credentials = {}
     use_stauth = False
 
@@ -70,7 +69,6 @@ def fallback_login_form():
             st.session_state["username"] = u
             st.session_state["name"] = nombres[usuarios.index(u)]
             st.success("Login correcto (fallback).")
-            # rerun para que la app pase al modo logueado
             st.experimental_rerun()
         else:
             st.error("Usuario o contraseña incorrectos (fallback).")
@@ -85,23 +83,20 @@ username = None
 nombre = None
 
 if authenticator is not None:
-    # Llamamos login con la firma segura (evitamos pasar posicionales)
+    # Llamamos login con varias firmas posibles
     try:
         auth_status = authenticator.login(name="Login", location="main")
     except TypeError:
-        # intentamos otras firmas posibles
         try:
             auth_status = authenticator.login(location="main")
         except Exception:
-            # si falla la librería al renderizar, lo marcamos para usar fallback
             auth_status = None
     except Exception:
         auth_status = None
 
-    # Si la librería devolvió True/False/None, manejamos:
+    # Normalizar respuesta
     if isinstance(auth_status, (bool, type(None))):
         if auth_status is True:
-            # intentamos obtener username y nombre desde el objeto
             username = getattr(authenticator, "username", None)
             try:
                 nombre = authenticator.credentials["usernames"][username]["name"]
@@ -111,21 +106,16 @@ if authenticator is not None:
         elif auth_status is False:
             logged_in = False
         else:
-            # None -> usuario todavía no completó (o la UI no aparece)
             logged_in = False
     else:
-        # Si la librería devolvió otro tipo (tuple/dict) intentamos normalizar
         if isinstance(auth_status, tuple):
-            # versiones antiguas devolvían (name, status, username)
             if len(auth_status) == 3:
                 nombre, status, username = auth_status
                 auth_status = status
                 logged_in = bool(status)
             else:
-                # fallback
                 logged_in = False
         elif isinstance(auth_status, dict):
-            # versiones raras
             status = auth_status.get("authenticated") or auth_status.get("authentication_status") or None
             auth_status = status
             logged_in = bool(status)
@@ -134,13 +124,11 @@ if authenticator is not None:
 
 # Si authenticator no existe o no permitió logueo, usamos fallback
 if not logged_in:
-    # Si ya hay sesión activa desde fallback, respetarla
     if st.session_state.get("logged_in", False):
         logged_in = True
         username = st.session_state.get("username")
         nombre = st.session_state.get("name")
     else:
-        # mostramos fallback solamente si la librería no logró autenticación o no está presente
         if authenticator is None or auth_status is None:
             logged_in = fallback_login_form()
             if logged_in:
@@ -148,22 +136,18 @@ if not logged_in:
                 nombre = st.session_state.get("name")
 
 # ----------------------------
-# Si no está logueado: mostrar mensaje y salir (ya mostramos fallback o el form de la librería)
+# Si no está logueado: mostrar mensaje y detener ejecución (ya mostramos UI de login)
 # ----------------------------
 if not logged_in:
-    # Si la librería está presente y devolvió False, mostramos error
     if auth_status is False:
         st.error("❌ Usuario o contraseña incorrectos")
-    # en cualquier caso terminamos aquí; el usuario debe loguearse usando la UI visible arriba
     st.stop()
 
 # ----------------------------
 # Usuario logueado: interfaz principal
 # ----------------------------
-# Si llegamos acá, 'username' y 'nombre' idealmente existen.
 if not nombre and username:
     try:
-        # intentar obtener nombre desde credentials (si stauth está activo)
         nombre = authenticator.credentials["usernames"][username]["name"]
     except Exception:
         nombre = username
@@ -185,7 +169,6 @@ if authenticator is not None:
             logout_done = False
 
 if not logout_done:
-    # fallback de logout en sidebar
     if st.sidebar.button("Cerrar sesión (fallback)"):
         st.session_state["logged_in"] = False
         st.session_state.pop("username", None)
@@ -221,5 +204,22 @@ else:
     for idx, row in df.iterrows():
         col1, col2 = st.columns([4, 1])
         with col1:
-            desc = f" - {row['Descripción']}" if row.get("Descripción", "") else ""
-            st.write(f"**ID {idx}** — {row['Persona']} • {row['Tipo']} • $
+            desc = f" - {row.get('Descripción', '')}" if row.get("Descripción", "") else ""
+            # línea corregida: f-string en una sola línea y formateo seguro del monto
+            st.write(f"**ID {idx}** — {row.get('Persona', '')} • {row.get('Tipo', '')} • ${float(row.get('Monto', 0.0)):.2f}{desc}")
+        with col2:
+            if st.button("🗑️", key=f"delete_{idx}"):
+                borrar_movimiento(idx)
+                st.experimental_rerun()
+
+# ----------------------------
+# Saldos
+# ----------------------------
+st.subheader("📊 Saldos")
+saldos, total = calcular_saldos()
+if saldos:
+    for p, s in saldos.items():
+        st.write(f"**{p}:** ${s:.2f}")
+else:
+    st.write("No hay saldos para mostrar.")
+st.write(f"### 💰 Total conjunto: ${total:.2f}")
