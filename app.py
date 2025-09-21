@@ -1,4 +1,4 @@
-# app.py - versión final: safe_rerun usando st.query_params cuando esté disponible
+# app.py - fallback login sin forzar recarga (versión corregida)
 import streamlit as st
 import streamlit_authenticator as stauth
 from utils import cargar_datos, agregar_movimiento, borrar_movimiento, calcular_saldos
@@ -46,60 +46,44 @@ if use_stauth:
         use_stauth = False
 
 # ----------------------------
-# Helper: recargar de forma segura (usa st.query_params cuando exista)
+# Helper: recargar de forma segura (usa st.query_params cuando esté disponible)
 # ----------------------------
 def safe_rerun():
     """
-    Intenta recargar la app. Primero intenta st.experimental_rerun().
-    Si no existe, intenta forzar un reload cambiando st.query_params (o las funciones experimentales si están).
-    Si eso tampoco funciona, muestra un aviso para refrescar manualmente.
+    Intenta recargar la app. Usa st.experimental_rerun si existe,
+    si no usa st.query_params o las funciones experimentales antiguas.
+    Si todo falla, pide refrescar manualmente.
     """
-    # 1) preferido: experimental_rerun si existe
     try:
-        # st.experimental_rerun puede no existir en algunas versiones; si existe, lo usamos
         if hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
             return
     except Exception:
         pass
 
-    # 2) intentar togglear query params usando la API nueva st.query_params
     try:
         if hasattr(st, "query_params"):
-            try:
-                params = st.query_params or {}
-            except Exception:
-                params = {}
-            # obtener valor actual (lista de strings) o default
+            params = st.query_params or {}
             current = 0
             if params.get("_refresh"):
                 try:
                     current = int(params.get("_refresh")[0])
                 except Exception:
                     current = 0
-            # construir nuevo dict: st.query_params espera valores tipo list[str]
-            new = dict(params)  # copia shallow
+            new = dict(params)
             new["_refresh"] = [str(current ^ 1)]
-            # asignar de vuelta (API moderna)
             try:
                 st.query_params = new
-                # detener ejecución para que Streamlit recargue con nuevos params
                 st.stop()
                 return
             except Exception:
-                # si no se puede asignar, caer al siguiente fallback
                 pass
-
     except Exception:
         pass
 
-    # 3) fallback a las funciones experimentales antiguas, si existen
     try:
         if hasattr(st, "experimental_get_query_params") and hasattr(st, "experimental_set_query_params"):
-            try:
-                params = st.experimental_get_query_params() or {}
-            except Exception:
-                params = {}
+            params = st.experimental_get_query_params() or {}
             current = 0
             if params.get("_refresh"):
                 try:
@@ -115,16 +99,16 @@ def safe_rerun():
     except Exception:
         pass
 
-    # 4) si todo falla, pedir refresh manual
     st.warning("No se pudo recargar automáticamente — por favor refrescá la página manualmente para ver los cambios.")
 
 # ----------------------------
-# Función: fallback login (form propio)
+# Función: fallback login (form propio) - **no fuerza recarga**
 # ----------------------------
 def fallback_login_form():
     """
     Muestra un formulario simple de login si la librería falla.
     Guarda estado en st.session_state['logged_in'], ['username'], ['name'].
+    No fuerza rerun; permite que el mismo flujo continúe y muestre la app.
     """
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
@@ -138,12 +122,11 @@ def fallback_login_form():
         submit = st.form_submit_button("Ingresar")
     if submit:
         if u in usuarios and p == contrasenas[usuarios.index(u)]:
+            # Seteamos sesión y devolvemos True (no forzamos recarga)
             st.session_state["logged_in"] = True
             st.session_state["username"] = u
             st.session_state["name"] = nombres[usuarios.index(u)]
             st.success("Login correcto (fallback).")
-            # intentamos recargar la app para actualizar la UI
-            safe_rerun()
             return True
         else:
             st.error("Usuario o contraseña incorrectos (fallback).")
@@ -205,6 +188,7 @@ if not logged_in:
         nombre = st.session_state.get("name")
     else:
         if authenticator is None or auth_status is None:
+            # aquí usamos el fallback que NO fuerza recarga
             logged_in = fallback_login_form()
             if logged_in:
                 username = st.session_state.get("username")
@@ -248,7 +232,6 @@ if not logout_done:
         st.session_state["logged_in"] = False
         st.session_state.pop("username", None)
         st.session_state.pop("name", None)
-        # intentar recargar para aplicar logout
         safe_rerun()
         st.info("Sesión cerrada. Refresca la página si sigue apareciendo logueado.")
         st.stop()
@@ -268,7 +251,6 @@ if submit:
     if monto > 0:
         agregar_movimiento(persona, tipo, monto, descripcion)
         st.success("✅ Movimiento agregado.")
-        # intentar recargar para mostrar nuevo registro
         safe_rerun()
     else:
         st.error("El monto debe ser mayor a 0.")
@@ -289,7 +271,6 @@ else:
         with col2:
             if st.button("🗑️", key=f"delete_{idx}"):
                 borrar_movimiento(idx)
-                # intentamos recargar; si no es posible, avisamos
                 safe_rerun()
                 st.info("Movimiento borrado. Refresca la página si el historial no se actualiza.")
                 st.stop()
