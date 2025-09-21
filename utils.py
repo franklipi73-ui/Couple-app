@@ -28,7 +28,7 @@ def borrar_movimiento(indice):
     df = cargar_datos()
     if indice in df.index:
         df = df.drop(index=indice)
-        # opcional: reasignar índices (para mantener índices 0..n-1)
+        # reasignar índices (mantener 0..n-1)
         df = df.reset_index(drop=True)
         guardar_datos(df)
     return df
@@ -44,6 +44,5 @@ def calcular_saldos():
     gastos = df[df["Tipo"] == "Gasto"].groupby("Persona")["Monto"].sum()
     saldo_persona = ingresos.subtract(gastos, fill_value=0)
     saldo_total = float(saldo_persona.sum())
-    # convertir a float simples
     saldos_dict = {k: float(v) for k, v in saldo_persona.to_dict().items()}
     return saldos_dict, saldo_total
